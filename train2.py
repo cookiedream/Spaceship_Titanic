@@ -1,240 +1,220 @@
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
-import numpy as np
-from xgboost import XGBClassifier
-from sklearn.svm import SVC
-from sklearn.datasets import make_hastie_10_2
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier, ExtraTreesClassifier, VotingClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import OneHotEncoder
-from sklearn import metrics
-from sklearn.model_selection import GridSearchCV
-import os
+from lib import *
 
-# Function to plot the ROC curve
+# Filename
+FILE_PREFIX = "./data/"
+dirpath = './images/'
+# 讀取訓練資料
+train_df = pd.read_csv( FILE_PREFIX + "train.csv" )
+
+test_df = pd.read_csv( FILE_PREFIX + "test.csv" )
 
 
-def plot_roc(y_test, y_score, y_train, y_score_train, savepath):
-    try:
-        os.mkdir(savepath)
-    except:
-        pass
-    fpr = dict()
-    tpr = dict()
-    roc_auc = dict()
+# PassengerId、HomePlanet、CryoSleep、Cabin、Destination、Age、VIP、RoomService、FoodCourt、ShoppingMall、Spa、VRDeck、Name、Transported
 
-    fpr_train = dict()
-    tpr_train = dict()
-    roc_auc_train = dict()
-
-    # Compute micro-average ROC curve and ROC area
-    fpr["micro"], tpr["micro"], _ = metrics.roc_curve(
-        y_test.ravel(), y_score.ravel())
-    roc_auc["micro"] = metrics.auc(fpr["micro"], tpr["micro"])
-
-    # Compute micro-average ROC curve and ROC area
-    fpr_train["micro"], tpr_train["micro"], _ = metrics.roc_curve(
-        y_train.ravel(), y_score_train.ravel())
-    roc_auc_train["micro"] = metrics.auc(
-        fpr_train["micro"], tpr_train["micro"])
-
-    plt.figure()
-    lw = 2
-    plt.plot(fpr["micro"], tpr["micro"], color='darkorange',
-             lw=lw, label='Test ROC curve (area = %0.2f)' % roc_auc["micro"])
-    plt.plot(fpr_train["micro"], tpr_train["micro"], color='green',
-             lw=lw, label='Training ROC curve (area = %0.2f)' % roc_auc_train["micro"])
-    plt.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.title('Receiver operating characteristic')
-    plt.legend(loc="lower right")
-    plt.savefig(savepath + "/ROC.png")
-    plt.show()
+# print( train.columns.values )
+# print ( train.dtypes)
+# print(train.head(100))
 
 
-def get_dataframe(csv_name):
-    df = pd.read_csv(csv_name)
-    # 填補缺失資料
-    # 如果沒花任何錢""
+# 計算缺失值
+# train_missing = train_df.isnull().sum()
+# test_missing = test_df.isnull().sum()
 
-    df.loc[((df['RoomService'] + df['FoodCourt'] + df['ShoppingMall'] + df['Spa'] + df['VRDeck']) == 0)&
-           (df['CryoSleep'].isna()), 'CryoSleep'] = True
-    # We start by filling the missing values with the mode of the object columns
-    df.loc[(df['CryoSleep'].isna()), 'CryoSleep'] = False
-    char_variables = list(df.select_dtypes(include=['object']).columns)
+# print('training loss data:')
+# print(train_missing)
+# print()
+# print('testing loss data:')
+# print(test_missing)
 
-    # We remove the columns that we do not want to fill since it doesnt make sense
-    char_variables.remove('Name')
-    char_variables.remove('Cabin')
+# copy of train and test data
 
-    for i in char_variables:
-        df[i] = df[i].fillna(df[i].mode()[0])
-
-    # We fill the missing values with the mean of the numeric columns
-    numeric_variables = list(df.select_dtypes(
-        include=['int64', 'float64']).columns)
-
-    for col in numeric_variables:
-        df.hist(column=col)
-    # We first fill the money values based on the cryosleep values
-    df['RoomService'] = np.where(df['CryoSleep'] == True, 0, df['RoomService'])
-    df['FoodCourt'] = np.where(df['CryoSleep'] == True, 0, df['FoodCourt'])
-    df['ShoppingMall'] = np.where(
-        df['CryoSleep'] == True, 0, df['ShoppingMall'])
-    df['Spa'] = np.where(df['CryoSleep'] == True, 0, df['Spa'])
-    df['VRDeck'] = np.where(df['CryoSleep'] == True, 0, df['VRDeck'])
-
-    for i in numeric_variables:
-        df[i] = df[i].fillna(df[i].median())
-
-    # Based on the information we have, we can create new columns:
-
-    # New column with the passenger group
-    df['PassengerGroup'] = df['PassengerId'].str.slice(0, 4)
-
-    # 將Cabin的三個屬性分開
-    df['Deck'] = df['Cabin'].str.split('/').str[0]
-    df['Room'] = df['Cabin'].str.split('/').str[1]
-    df['Side'] = df['Cabin'].str.split('/').str[2]
-
-    # New colums to indicate if the passenger has a family member or not
-    df['HasFamily'] = df['PassengerGroup'].isin(df['PassengerGroup'].value_counts()[
-                                                df['PassengerGroup'].value_counts() > 1].index).astype('bool')
-
-    # We create new variables with a boolean if passenger has spent money or not
-    df['BoolRoom'] = df['RoomService'].apply(
-        lambda x: 1 if x > 0 else 0).astype('bool')
-    df['BoolFood'] = df['FoodCourt'].apply(
-        lambda x: 1 if x > 0 else 0).astype('bool')
-    df['BoolMall'] = df['ShoppingMall'].apply(
-        lambda x: 1 if x > 0 else 0).astype('bool')
-    df['BoolSpa'] = df['Spa'].apply(lambda x: 1 if x > 0 else 0).astype('bool')
-    df['BoolVRDeck'] = df['VRDeck'].apply(
-        lambda x: 1 if x > 0 else 0).astype('bool')
-
-    # We create new variables with total money spent and average money spent
-    money_cols = ['RoomService', 'FoodCourt', 'ShoppingMall', 'Spa', 'VRDeck']
-    df['TotalBill'] = df[money_cols].sum(axis=1)
-    # df['AverageBill'] = df[money_cols].mean(axis=1)
-
-    # We create new variables with a boolean if passenger has spent money or not
-    df['IsBill'] = df['TotalBill'] > 0
-    df['CountBill'] = df[money_cols].replace(
-        0, np.nan, inplace=False).count(axis=1, numeric_only=True)
-    return df
+train_df_1 = train_df.copy()
+test_df_1 = test_df.copy()
 
 
-if __name__ == '__main__':
-    df = get_dataframe('./data/train.csv')
 
-    # We create two new data frames, one with the features and the other with the target
-    Features = df.loc[:, df.columns.difference(
-        ['Transported', 'Name', 'Cabin', 'PassengerGroup'])]
-    char_features = list(Features.select_dtypes(include=['object']).columns)
-    char_features.remove('PassengerId')
-    print(char_features)
-    y = df['Transported']
+train_df_1[["CabinDeck", "CabinNo.", "CabinSide"]] = train_df_1["Cabin"].str.split('/', expand = True)
 
-    # Generate binary values using get_dummies
-    dum_df = pd.get_dummies(Features[char_features], columns=char_features, prefix=[
-                            'Deck_', 'Destination_', 'HomePlanet_', 'Room_', 'Side_'])
-    X = Features.join(dum_df)
-    X = X.drop(char_features, axis=1)
-    X = X.drop('PassengerId', axis=1)
-    X.to_csv("x.csv")
-    # We split the data into train and test
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.1, random_state=1234)
+combine = [train_df_1, test_df_1]
 
-    # Parameters for the grid search
-    #ett = ExtraTreesClassifier()
-    rdf = RandomForestClassifier()
-    # Champion model parameters :  {'learning_rate': 0.25555555555555554, 'loss': 'exponential', 'max_depth': 5, 'min_samples_leaf': 0.001, 'min_samples_split': 0.26410526315789473, 'n_estimators': 100}
-    param_grid_1 = {
-        # "loss": ["exponential"],
-        # "criterion":['gini', 'entropy'],
-        "learning_rate": [0.07777777777777778],# np.linspace(0.05, 0.1, 10),
-        # "min_samples_split": np.linspace(0.001, 5, 20),
-        # "min_samples_leaf": np.linspace(0.001, 5, 20),
-        "max_depth": [5],
-        "n_estimators": [200]
-    }
+# print(train.info())
+# print('='*50)
+# print(test.info())
 
-    param_grid_2 = {
-        "loss": ["exponential"],
-        # "criterion":['gini', 'entropy'],
-        "learning_rate": np.linspace(0.1, 1.5, 10),
-        "min_samples_split": np.linspace(0.001, 5, 20),
-        "min_samples_leaf": np.linspace(0.001, 5, 20),
-        "max_depth": [5],
-        "n_estimators": [200]
-    }
+# print(train_df.describe())
+# print('='*150)
+# print(train_df.describe(include=['O']))
 
-    # param_grid = {
-    #     'kernel': ['poly', 'rbf', 'sigmoid'],
-    #     'degree': [3, 4, 5],
-    #     'coef0': [1, 2],
-    #     'C': np.linspace(1, 5, 5),
-    #     'max_iter': [500]
-    # }
 
-    # We fit a Gradient Boosting model with the train data
-    # Champion model parameters :  {'learning_rate': 0.07777777777777778, 'max_depth': 5, 'n_estimators': 200}
-    grid_search_1 = XGBClassifier(learning_rate=0.07777777777777778, max_depth=5, n_estimators=200)
-    # grid_search_1 = GridSearchCV(estimator=xgb, param_grid=param_grid_1,
-    #                            cv=3, n_jobs=-1, verbose=1)
-    grid_search_1.fit(X_train, y_train)
-    # print('Champion model parameters : ', grid_search_1.best_params_)
+for dataset in combine:    
+    dataset['HomePlanet'].fillna(dataset['HomePlanet'].mode()[0],inplace = True)
+    dataset['Age'].fillna(dataset['Age'].median(), inplace = True)
+    dataset['CryoSleep'].fillna(dataset['CryoSleep'].mode()[0],inplace = True)
+    dataset['Destination'].fillna(dataset['Destination'].mode()[0],inplace = True)
+    dataset['VIP'].fillna(dataset['VIP'].mode()[0],inplace = True)
+    dataset['RoomService'].fillna(dataset['RoomService'].median(), inplace = True)
+    dataset['FoodCourt'].fillna(dataset['FoodCourt'].median(), inplace = True)
+    dataset['ShoppingMall'].fillna(dataset['ShoppingMall'].median(), inplace = True)
+    dataset['Spa'].fillna(dataset['Spa'].median(), inplace = True)
+    dataset['VRDeck'].fillna(dataset['VRDeck'].median(), inplace = True)
 
-    # Champion model parameters :  {'learning_rate': 0.1, 'loss': 'exponential', 。'max_depth': 5, 'min_samples_leaf': 0.001, 'min_samples_split': 0.26410526315789473, 'n_estimators': 200}
-    # gbc = GradientBoostingClassifier()
-    # grid_search_2 = GridSearchCV(estimator=gbc, param_grid=param_grid_2,
-    #                            cv=3, n_jobs=-1, verbose=1)
-    # grid_search_2.fit(X_train, y_train)                          
-    # print('Champion model parameters : ', grid_search_2.best_params_)
-    grid_search = grid_search_1
 
-    # grid_search = VotingClassifier(estimators=[
-    #     ('xgb', grid_search_1),
-    #     ('gbc', grid_search_2),
-    # ], voting='soft')
 
-    # grid_search.fit(X_train, y_train)
-    # We predict the test data to check the accuracy
+train_missing = train_df_1.isnull().sum()
+test_missing = test_df_1.isnull().sum()
+
+
+# 補缺失值之後再次計算缺失值
+# print('training loss data:')
+# print(train_missing)
+# print('='*150)
+# print('testing loss data:')
+# print(test_missing)
+
+
+# Categorical features
+cat_feats=['HomePlanet', 'CryoSleep', 'Destination', 'VIP']
+
+# Plot categorical features
+fig=plt.figure(figsize=(10,15))
+for i, var_name in enumerate(cat_feats):
+    ax=fig.add_subplot(4,1,i+1)
+    sns.countplot(data=train_df, x=var_name, axes=ax, hue='Transported')
+    ax.set_title(var_name)
+fig.tight_layout()  # Improves appearance a bit
+plt.savefig( dirpath + 'Categorical_features.png' )
+
+
+
+train_df_1 = pd.get_dummies(train_df_1, columns = ['HomePlanet','Destination','CryoSleep'])
+test_df_1 = pd.get_dummies(test_df_1,columns = ['Destination'])
+
+# train_df_1[["CabinDeck", "CabinNo.", "CabinSide"]] = train_df_1["Cabin"].str.split('/', expand = True)
+# VIP = train_df_1[["VIP", "Transported"]].groupby(['VIP'], as_index=False).mean().sort_values(by='Transported', ascending=False)
+# print(VIP)
+# print(Transported)
+# print(train_df_1)
+# train_df_1 = pd.get_dummies(train_df_1, columns = ['VIP'])
+# train_df_1['VIP'] = LabelEncoder().fit_transform(train_df_1['VIP'])
+
+# 將 True 轉換為 1，False 轉換為 0
+# train_df_1['VIP'] = train_df_1['VIP'].astype(int)
+# test_df_1['VIP'] = test_df_1['VIP'].astype(int)
+
+# 使用 get_dummies 進行 One-Hot Encoding
+# train_df_1 = pd.get_dummies(train_df_1, columns=['VIP'], prefix='VIP')
+# test_df_1 = pd.get_dummies(test_df_1, columns=['VIP'], prefix='VIP')
+side_map = {'P':1,'S':0}
+for dataset in combine:
+    train_df_1['VIP'] = train_df_1['VIP'].astype(int)
+    dataset['AgeBin'] = pd.cut(dataset['Age'].astype(int), 5)
+    dataset['Cabin'].fillna('Z/9999/Z', inplace=True)
     
-    # print('Champion model parameters : ', grid_search_2.best_params_)
-    print('Test Score : ', grid_search.score(X_test, y_test))
-    print('Train Score : ', grid_search.score(X_train, y_train))
+    
+    dataset['deck'] = dataset['Cabin'].apply(lambda x:str(x)[:1])
+    dataset['num'] = dataset['Cabin'].apply(lambda x:x.split('/')[1])
+    dataset['num'] = dataset['num'].astype(int)
+    dataset['side'] = dataset['Cabin'].apply(lambda x:str(x)[-1:])
+    dataset['deck'].fillna(dataset['deck'].mode()[0],inplace=True)
+    dataset['num'].fillna(dataset['num'].mode()[0],inplace=True)
+    dataset['side'].fillna(dataset['side'].mode()[0],inplace=True)
+    
+    
+    dataset['side'] = dataset['side'].map(side_map)
+    dataset['side'].fillna(dataset['side'].mode()[0],inplace=True)
+    
+    # dataset.loc[ dataset['Age'] <= 15, 'Age'] = 0
+    # dataset.loc[(dataset['Age'] > 15) & (dataset['Age'] <= 31), 'Age'] = 1
+    # dataset.loc[(dataset['Age'] > 31) & (dataset['Age'] <= 47), 'Age'] = 2
+    # dataset.loc[(dataset['Age'] > 47) & (dataset['Age'] <= 63), 'Age'] = 3
+    # dataset.loc[(dataset['Age'] > 63), 'Age'] = 4
+    # dataset['Age'] = dataset['Age'].astype(int)
+    # print(dataset['VIP'].dtype)
+    # print(dataset['VIP'].unique())
 
-    # We plot the ROC curve
-    # plot_roc(y_test, grid_search.predict(X_test),
-    #          y_train, grid_search.predict(X_train), "roc_xgb_5")
+    
 
-    test = get_dataframe('./data/test.csv')
+    
+# train_df_1[['AgeBin','Transported']].groupby(['AgeBin'],as_index=False).mean().sort_values(by='Transported',ascending=False)
 
-    Features_ = test.loc[:, test.columns.difference(
-        ['Transported', 'Name', 'Cabin', 'PassengerGroup'])]
-    char_features = list(Features_.select_dtypes(include=['object']).columns)
-    char_features.remove('PassengerId')
-    print(char_features)
+# train_df_1 = train_df_1.drop(['Cabin'],axis=1)
+# test_df_1 = test_df_1.drop(['Cabin'],axis=1)
 
-    # Generate binary values using get_dummies
-    dum_test = pd.get_dummies(Features_[char_features], columns=char_features, prefix=[
-                              'Deck_', 'Destination_', 'HomePlanet_', 'Room_', 'Side_'])
-    X_ = Features_.join(dum_test)
-    X_ = X_.drop(char_features, axis=1)
-    X_ = X_.drop('PassengerId', axis=1)
-    X_ = X_[X.columns]
+    
+# train_df_1[['deck','Transported']].groupby(['deck'],as_index=False).mean().sort_values(by='Transported',ascending=False)
+# for train_df_1 in combine:   
+#     train_df_1['AgeBin'] = pd.cut(train_df_1['Age'].astype(int), 5)
 
-    # Generate the predictions
-    # print(grid_search.predict(X_))
-    test['Transported'] = grid_search.predict(X)
-    # Check predictions frame
-    test['Transported'] = test['Transported'].astype('bool')
-    # test[['PassengerId', 'Transported']]
-    test[['PassengerId', 'Transported']].to_csv(
-        'submission_rdf.csv', index=False)
+print(train_df_1.columns.values)
+# print(train_df_1.head())
+# print(train_df_1.rpow)
+# print('='*150)
+# print(train_df.rpow)
+# train_missing = train_df_1.isnull().sum()
+# print(train_missing)
+
+
+
+
+# # drop features created during EDA
+# train_df_2 = train_df_1.copy()
+# train_df_2 = train_df_2.drop(["PassengerGroup",
+#                             "CabinDeck",
+#                             "CabinNo.",
+#                             "CabinSide",
+#                             "FamilyName",
+#                             "NoRelatives",
+#                             "NoInPassengerGroup",
+#                             "AgeCat",
+#                             "FamilySizeCat", 
+#                             "TotalSpendings"], axis = 1)
+
+# # save target variable  in train train_df_1 and save it in target
+# target = train_df_2["Transported"]
+
+# # save test PassengerId in test_id
+# test_id = test_df_1["PassengerId"]
+
+# # drop PassengerId  variable from the train set
+# train_df_3 = train_df_2.drop(["PassengerId"], axis = 1)
+
+# # join the train and test set
+# data = pd.concat([train_df_3, test], axis = 0).reset_index(drop = True)
+
+# print(data.shape)
+
+# 取得所有資料類別的欄位名稱
+# category_columns = train_df_1[['HomePlanet', 'CryoSleep', 'Destination', 'VIP']].select_dtypes(include='object').columns
+
+# 迴圈製作條形圖
+# for column in category_columns:
+#     plt.figure()
+#     normalized_data = train_df_1[column].value_counts(normalize=True).reset_index()
+#     normalized_data.columns = [column, f'Normalized {column} Count']
+#     ax = sns.barplot(x=column, y=f'Normalized {column} Count', data=normalized_data, color='skyblue')
+#     ax.set_xlabel(column)
+#     ax.set_ylabel(f'Normalized {column} Count')
+#     plt.savefig(dirpath + f'{column}_normalized.png')
+    
+    
+    # 可視化獨立分類特徵
+# train_df_1[["CabinDeck", "CabinNo.", "CabinSide"]] = train_df_1["Cabin"].str.split('/', expand = True)
+
+# category_columns_1 = train_df_1[['Transported', 'CabinDeck', 'CabinNo.', 'CabinSide']].select_dtypes(include='object').columns
+
+# for column in category_columns_1:
+#     plt.figure()
+#     ax = sns.countplot(x=column, data=train_df_1, color='b')
+#     ax.set_xlabel(column)
+#     ax.set_ylabel(f'{column} Count')
+#     plt.savefig(dirpath + f'{column}.png')
+    
+    
+
+# plt.figure(figsize=(16, 5))
+
+# plt.subplot(121)
+# sns.distplot(train_df_1['Age'])
+# plt.title('Distribution of Age')
+
+# plt.savefig( dirpath + 'Age.png' )
